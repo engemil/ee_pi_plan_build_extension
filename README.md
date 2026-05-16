@@ -9,7 +9,7 @@ The idea is simple:
 
 ## Modes
 
-### PLAN Mode (`⏸ PLAN`)
+### PLAN Mode (`📋 PLAN`)
 
 Read-only exploration mode for safe code analysis and planning.
 
@@ -171,7 +171,7 @@ Stale plan/build context messages are filtered out via the `context` event when 
 
 ## Visual Indicators
 
-- **Footer status:** `⏸ PLAN (alt+q)` or `🔨 BUILD 3/7 (alt+q)`
+- **Footer status:** `📋 PLAN (alt+q)` or `🔨 BUILD 3/7 (alt+q)`
 - **Widget (PLAN mode):** Full step checklist with ☑/☐ markers
 - **Widget (BUILD mode):** Remaining steps with progress header
 
