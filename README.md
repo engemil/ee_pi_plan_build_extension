@@ -30,34 +30,51 @@ Full tool access for executing the plan.
 
 ## Installation
 
-### Quick test
+Pi auto-discovers extensions from two locations and lets you hot-reload them with
+`/reload` (no restart needed):
+
+- **Global** — `~/.pi/agent/extensions/<name>/index.ts` (available in every project)
+- **Project-local** — `.pi/extensions/<name>/index.ts` (loads only after the project is trusted)
+
+### Global install (recommended)
+
+Copy this repo into pi's global extensions directory as a named subfolder, so that
+`index.ts` sits at its root:
 
 ```bash
-pi -e /path/to/ee_pi_plan_build_extension/
+git clone https://github.com/engemil/ee_pi_plan_build_extension.git ~/.pi/agent/extensions/ee_plan_build_extension
+
+# Then, in a running pi session, load it without restarting:
+/reload
 ```
 
-### Project-local (auto-discovered, supports `/reload`)
+### Project-local install
 
-```
-.pi/extensions/ee-plan-build/
-├── index.ts
-└── utils.ts
+Same idea, scoped to a single project (must be a trusted project):
+
+```bash
+mkdir -p .pi/extensions/ee_plan_build_extension
+cp index.ts utils.ts .pi/extensions/ee_plan_build_extension/
+
+# then:
+/reload
 ```
 
-### Global (auto-discovered, supports `/reload`)
+### Quick test (no install)
 
+```bash
+pi -e ./ee_pi_plan_build_extension/
 ```
-~/.pi/agent/extensions/ee-plan-build/
-├── index.ts
-└── utils.ts
-```
+
+> `pi -e` is for quick tests only and does **not** support `/reload` — restart pi to
+> pick up changes. Use a global or project-local install for hot-reload.
 
 ## Usage
 
-```bash
-# Start pi with the extension
-pi -e ./ee_pi_plan_build_extension/
+CLI flags are passed at launch (shown here with the `pi -e` quick-test form; once
+installed, just start `pi` normally):
 
+```bash
 # Start directly in plan mode
 pi -e ./ee_pi_plan_build_extension/ --plan
 
@@ -87,7 +104,7 @@ pi -e ./ee_pi_plan_build_extension/ --plan --plan-file ./docs/PLAN.md
 
 ## PLAN.md Format
 
-The extension uses a hybrid format — structured steps for tracking, freeform sections for context:
+The extension uses a hybrid format — structured steps for tracking, freeform sections for context, for example:
 
 ```markdown
 # Plan: Refactor auth module
