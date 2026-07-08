@@ -1,10 +1,11 @@
 /**
  * Utility functions for the EE Plan/Build extension.
- * Handles PLAN.md parsing, safe command checking, and step tracking.
+ * Handles PLAN.md parsing, file ops, step tracking, safe command checking,
+ * and gitignore management for the plan directory.
  */
 
-import { readFile, writeFile, access } from "node:fs/promises";
-import { join } from "node:path";
+import { readFile, writeFile, access, mkdir } from "node:fs/promises";
+import { join, dirname } from "node:path";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -21,6 +22,11 @@ export interface PlanFile {
 	notes: string;
 	raw: string;
 }
+
+// ── Defaults ─────────────────────────────────────────────────────────────────
+
+/** Default plan location, relative to the project root. */
+export const DEFAULT_PLAN_FILENAME = "tmp/PLAN.md";
 
 // ── PLAN.md Parsing ──────────────────────────────────────────────────────────
 
@@ -105,6 +111,16 @@ export function formatPlanContent(plan: PlanFile): string {
 
 // ── PLAN.md File Operations ──────────────────────────────────────────────────
 
+export async function ensureDir(dirPath: string): Promise<void> {
+	await mkdir(dirPath, { recursive: true });
+}
+
+/** Ensure the parent directory of a plan file exists (e.g. `tmp/`). */
+export async function ensurePlanDir(planAbsPath: string): Promise<void> {
+	const dir = dirname(planAbsPath);
+	await ensureDir(dir);
+}
+
 export async function readPlanFile(planPath: string): Promise<PlanFile | null> {
 	try {
 		const content = await readFile(planPath, "utf8");
@@ -116,6 +132,7 @@ export async function readPlanFile(planPath: string): Promise<PlanFile | null> {
 }
 
 export async function writePlanFile(planPath: string, plan: PlanFile): Promise<void> {
+	await ensurePlanDir(planPath);
 	await writeFile(planPath, formatPlanContent(plan), "utf8");
 }
 
@@ -189,7 +206,7 @@ export async function updatePlanFileCompletions(planPath: string, completedStepN
 
 		for (const stepNum of completedStepNumbers) {
 			// Match the specific step line and replace [ ] with [x]
-			const pattern = new RegExp(`^(\\s*${stepNum}\\.\\s+)\\[ \\]`, "m");
+			const pattern = new RegExp(`(\\s*${stepNum}\\.\\s+)\\[ \\]`, "m");
 			updated = updated.replace(pattern, "$1[x]");
 		}
 
@@ -231,20 +248,36 @@ export function formatProgressSummary(steps: PlanStep[]): string {
 	return summary;
 }
 
-// ── .gitignore Management ────────────────────────────────────────────────────
+// ── .gitignore Management (folder-aware) ─────────────────────────────────────
 
-export async function isInGitignore(cwd: string, filename: string): Promise<boolean> {
+/**
+ * Normalize a gitignore entry for comparison: strip a leading "/" and any
+ * trailing "/". e.g. "/tmp/", "tmp/", "/tmp", "tmp" all → "tmp".
+ */
+function normalizeEntry(entry: string): string {
+	return entry.trim().replace(/^\/+/, "").replace(/\/+$/, "");
+}
+
+/**
+ * Returns true if `entry` (a file or folder name like "tmp" or "PLAN.md")
+ * is already present in `.gitignore`.
+ */
+export async function isEntryInGitignore(cwd: string, entry: string): Promise<boolean> {
 	try {
 		const gitignorePath = join(cwd, ".gitignore");
 		const content = await readFile(gitignorePath, "utf8");
-		const lines = content.split("\n").map((l) => l.trim());
-		return lines.some((line) => line === filename || line === `/${filename}`);
+		const target = normalizeEntry(entry);
+		return content
+			.split("\n")
+			.map((l) => normalizeEntry(l))
+			.some((line) => line === target);
 	} catch {
 		return false;
 	}
 }
 
-export async function addToGitignore(cwd: string, filename: string): Promise<void> {
+/** Append an entry to `.gitignore`, creating the file if needed. */
+export async function addToGitignore(cwd: string, entry: string): Promise<void> {
 	const gitignorePath = join(cwd, ".gitignore");
 	let content = "";
 	try {
@@ -254,8 +287,20 @@ export async function addToGitignore(cwd: string, filename: string): Promise<voi
 	}
 
 	const newline = content.length > 0 && !content.endsWith("\n") ? "\n" : "";
-	content += `${newline}${filename}\n`;
+	content += `${newline}${entry}\n`;
 	await writeFile(gitignorePath, content, "utf8");
+}
+
+/**
+ * Ensure a directory (e.g. "tmp") is ignored by git.
+ * Returns true if it was already ignored, false if it was just added.
+ */
+export async function ensureDirGitignored(cwd: string, dirName: string): Promise<boolean> {
+	const already = await isEntryInGitignore(cwd, dirName);
+	if (already) return true;
+	// Add with a trailing slash to make clear it's a directory.
+	await addToGitignore(cwd, `${dirName}/`);
+	return false;
 }
 
 // ── Safe Command Checking (Plan Mode) ────────────────────────────────────────
@@ -349,8 +394,24 @@ const SAFE_PATTERNS = [
 	/^\s*eza\b/,
 ];
 
+/**
+ * Determine whether a shell command is safe to run in PLAN (read-only) mode.
+ *
+ * Splits compound commands on `;`, `&&`, `||`, and `|` and requires EVERY
+ * non-empty segment to match a safe read-only pattern. A destructive pattern
+ * anywhere in the command (including inside `$(...)` substitution) blocks it.
+ */
 export function isSafeCommand(command: string): boolean {
-	const isDestructive = DESTRUCTIVE_PATTERNS.some((p) => p.test(command));
-	const isSafe = SAFE_PATTERNS.some((p) => p.test(command));
-	return !isDestructive && isSafe;
+	// Belt-and-suspenders: a destructive token anywhere blocks the whole command.
+	// This catches command substitution like `$(rm -rf x)` even if the leading
+	// command is benign.
+	if (DESTRUCTIVE_PATTERNS.some((p) => p.test(command))) return false;
+
+	const segments = command
+		.split(/\s*(?:&&|\|\||;|\|)\s*/)
+		.map((s) => s.trim())
+		.filter(Boolean);
+	if (segments.length === 0) return false;
+
+	return segments.every((seg) => SAFE_PATTERNS.some((p) => p.test(seg)));
 }

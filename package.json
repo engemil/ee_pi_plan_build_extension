@@ -1,0 +1,23 @@
+{
+  "name": "ee-plan-build-extension",
+  "version": "1.1.0",
+  "description": "Three-mode (NORMAL/PLAN/BUILD) workflow extension for Pi, inspired by opencode's plan/build agent model.",
+  "license": "MIT",
+  "type": "module",
+  "main": "index.ts",
+  "keywords": ["pi-package", "pi", "extension", "plan", "build", "workflow"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/engemil/ee_pi_plan_build_extension.git"
+  },
+  "pi": {
+    "extensions": ["./index.ts"]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-agent-core": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  }
+}

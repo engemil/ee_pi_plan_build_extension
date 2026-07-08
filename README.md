@@ -1,62 +1,70 @@
-# EngEmil Pi (AI Coding Harness) Plan/Build Extension
+# EngEmil Pi Plan/Build Extension
 
-A two-mode workflow extension for [Pi](https://pi.dev) that separates planning from execution — inspired by the opencode "plan/build" pattern.
+A **three-mode** workflow extension for [Pi](https://pi.dev) that separates planning
+from execution — inspired by the opencode "plan/build" agent model.
 
-The idea is simple:
-- **PLAN mode**: Read-only exploration. Safely analyze code and build a plan in `PLAN.md`.
-- **BUILD mode**: Full tool access. Execute the plan with progress tracking.
-- Toggle between them with `alt+q` or `/plan`.
+- **NORMAL** — vanilla pi. Full tools, no plan overhead. (default)
+- **PLAN** — read-only exploration + plan authoring. Only the plan file is writable.
+- **BUILD** — full execution with plan context injection and `[DONE:n]` progress tracking.
+
+Switch modes three ways: the `alt+q` cycle, the `/plan` `/build` `/normal` commands,
+or let the **model** propose a switch via the `plan_enter` / `plan_exit` tools (you
+confirm in a dialog — just like opencode).
+
+> Plan lives at `tmp/PLAN.md` by default. The extension creates `tmp/` and adds it to
+> `.gitignore` automatically, so plans never get committed and your project root stays clean.
 
 ## Modes
 
-### PLAN Mode (`📋 PLAN`)
+### NORMAL (`💬 NORMAL`)
 
-Read-only exploration mode for safe code analysis and planning.
+Vanilla pi — the "just code/chat" mode.
 
-- Read files, grep, find, ls freely
-- Bash restricted to an allowlist of read-only commands
-- Write/edit access **only** to `PLAN.md`
-- Cannot modify any other files
-- Context injection tells the LLM it's in plan mode and how to format the plan
+- Full tool access (whatever you or pi have configured)
+- No plan context injected, no progress tracking, no widget
+- `plan_enter` tool available so the model can suggest planning a complex task
 
-### BUILD Mode (`🔨 BUILD`)
+### PLAN (`📋 PLAN`)
+
+Read-only exploration and plan authoring.
+
+- Read, grep, find, ls freely
+- Bash restricted to a read-only allowlist (compound commands are split and checked)
+- Write/edit **only** to the plan file (`tmp/PLAN.md` by default)
+- A rich, opencode-style workflow prompt is injected every turn (understand → design →
+  review → write plan → call `plan_exit`)
+- `plan_exit` tool available — calls a dialog to switch to BUILD when the plan is ready
+
+### BUILD (`🔨 BUILD`)
 
 Full tool access for executing the plan.
 
-- All tools available (read, bash, edit, write, grep, find, ls)
-- Plan context injected automatically
-- Progress tracked via `[DONE:n]` markers in assistant responses
-- `PLAN.md` checkboxes updated on disk when steps complete
+- All tools available
+- Plan context injected automatically (full plan on first turn / after compaction,
+  remaining steps on subsequent turns)
+- Progress tracked via `[DONE:n]` markers; checkboxes synced to the plan file on disk
+- `plan_enter` tool available
 
 ## Installation
 
-Pi auto-discovers extensions from two locations and lets you hot-reload them with
-`/reload` (no restart needed):
+Pi auto-discovers extensions from two locations and hot-reloads them with `/reload`:
 
-- **Global** — `~/.pi/agent/extensions/<name>/index.ts` (available in every project)
-- **Project-local** — `.pi/extensions/<name>/index.ts` (loads only after the project is trusted)
+- **Global** — `~/.pi/agent/extensions/<name>/index.ts` (every project)
+- **Project-local** — `.pi/extensions/<name>/index.ts` (trusted projects only)
 
-### Global install (recommended)
-
-Copy this repo into pi's global extensions directory as a named subfolder, so that
-`index.ts` sits at its root:
+### Global (recommended)
 
 ```bash
 git clone https://github.com/engemil/ee_pi_plan_build_extension.git ~/.pi/agent/extensions/ee_plan_build_extension
-
-# Then, in a running pi session, load it without restarting:
+# then, in a running pi session:
 /reload
 ```
 
-### Project-local install
-
-Same idea, scoped to a single project (must be a trusted project):
+### Project-local
 
 ```bash
 mkdir -p .pi/extensions/ee_plan_build_extension
-cp index.ts utils.ts .pi/extensions/ee_plan_build_extension/
-
-# then:
+cp index.ts utils.ts modes.ts prompts.ts tools.ts .pi/extensions/ee_plan_build_extension/
 /reload
 ```
 
@@ -66,171 +74,149 @@ cp index.ts utils.ts .pi/extensions/ee_plan_build_extension/
 pi -e ./ee_pi_plan_build_extension/
 ```
 
-> `pi -e` is for quick tests only and does **not** support `/reload` — restart pi to
-> pick up changes. Use a global or project-local install for hot-reload.
+> `pi -e` is for quick tests only and does not support `/reload`.
 
 ## Usage
 
-CLI flags are passed at launch (shown here with the `pi -e` quick-test form; once
-installed, just start `pi` normally):
+### Switching modes
+
+| Action | Effect |
+|---|---|
+| `alt+q` | Cycle: NORMAL → PLAN → BUILD → NORMAL |
+| `/plan` | Enter PLAN mode |
+| `/build` | Enter BUILD mode |
+| `/normal` | Enter NORMAL mode |
+| `/mode` | Show current mode |
+| `/plan status` | Show plan progress |
+| `/plan reset` | Empty the plan file (with confirm) and enter PLAN mode |
+| `plan_exit` tool | Model-initiated PLAN → BUILD (you confirm) |
+| `plan_enter` tool | Model-initiated → PLAN (you confirm) |
+
+### CLI flags
 
 ```bash
-# Start directly in plan mode
-pi -e ./ee_pi_plan_build_extension/ --plan
-
-# Use a custom plan file path
-pi -e ./ee_pi_plan_build_extension/ --plan --plan-file ./docs/PLAN.md
+pi -e ./ee_pi_plan_build_extension/ --plan          # start in PLAN
+pi -e ./ee_pi_plan_build_extension/ --build         # start in BUILD
+pi -e ./ee_pi_plan_build_extension/ --normal        # start in NORMAL (default)
+pi -e ./ee_pi_plan_build_extension/ --plan-file ./docs/PLAN.md   # custom plan path
 ```
-
-## Toggle
-
-- **Keyboard:** `alt+q`
-- **Slash command:** `/plan`
-
-## Commands
-
-| Command | Description |
-|---------|-------------|
-| `/plan` | Toggle between PLAN and BUILD mode |
-| `/plan status` | Show current plan progress |
-| `/plan reset` | Empty PLAN.md and switch to PLAN mode |
-
-## CLI Flags
 
 | Flag | Description |
 |------|-------------|
 | `--plan` | Start in PLAN mode |
-| `--plan-file <path>` | Custom plan file path (default: `PLAN.md` in cwd) |
+| `--build` | Start in BUILD mode |
+| `--normal` | Start in NORMAL mode (default) |
+| `--plan-file <path>` | Custom plan file path (default: `tmp/PLAN.md`) |
 
-## PLAN.md Format
+## Session start & `/new` behavior
 
-The extension uses a hybrid format — structured steps for tracking, freeform sections for context, for example:
+There is **no blocking modal** on entry — routine startup and `/new` go straight to
+NORMAL (or the mode you flagged). The plan file is **never destroyed** by `/new`; it is
+shared on disk across sessions.
+
+- If a plan file with content exists, you get a one-line, non-blocking notice:
+  `Plan found at tmp/PLAN.md — /plan to resume, /build to execute`.
+- `/new` resets to NORMAL with fresh per-session state; the plan file is untouched.
+- To clear a plan intentionally: `/plan reset` (asks for confirmation).
+- On `resume`/`fork`, completion state is rebuilt by scanning assistant messages
+  **only after the last build-context marker** — so an earlier plan's `[DONE:n]`
+  markers don't bleed into the current one.
+
+## Plan file format
+
+Hybrid format — structured steps for tracking, freeform sections for context:
 
 ```markdown
 # Plan: Refactor auth module
 
 ## Context
-The auth module needs to support OAuth2 in addition to the existing JWT flow.
-Current code is in src/auth/. Tests in tests/auth/.
+The auth module needs OAuth2 alongside the existing JWT flow. Code in src/auth/.
 
 ## Steps
 1. [ ] Audit current auth module structure
-2. [ ] Design OAuth2 integration points
-3. [ ] Implement OAuth2 provider interface
-4. [x] Add configuration for OAuth2 credentials
-5. [ ] Write integration tests
+2. [x] Add configuration for OAuth2 credentials
+3. [ ] Write integration tests
 
 ## Notes
-- Must maintain backward compatibility with existing JWT flow
-- Consider using passport.js for OAuth2
+- Maintain backward compatibility with JWT
 ```
 
-Only the `## Steps` section is parsed for progress tracking. Everything else is freeform.
+Only the `## Steps` section is parsed for progress tracking.
 
-## How It Works
+## How it works
 
-### Progress Tracking (BUILD Mode)
+### Tool-set management (no clobbering)
 
-When the agent completes a step, it includes a `[DONE:n]` marker in its response (e.g. `[DONE:3]`). The extension:
+On session start the extension captures your **baseline** active tools once. Mode
+switches only add/remove the two tools it manages (`plan_enter`, `plan_exit`) — your
+MCP, SDK, and other-extension tools are preserved.
 
-1. Detects the marker in `turn_end`
-2. Updates the in-memory step to completed
-3. Updates `[ ]` → `[x]` in `PLAN.md` on disk
-4. Refreshes the footer status and widget
-5. When all steps complete, sends a celebration message
+### PLAN enforcement (D1)
 
-### Context Injection (BUILD Mode)
+`edit`/`write` stay active so the model can author the plan file, but a `tool_call`
+guard blocks writes to anything except the plan file. Bash is checked against a
+read-only allowlist.
 
-- **First turn after switching to BUILD:** Full `PLAN.md` content injected via `before_agent_start`
-- **After compaction:** Full `PLAN.md` content re-injected
-- **Subsequent turns:** Only remaining unchecked steps injected
+### Transition tools (`plan_enter` / `plan_exit`)
 
-This balances full context when needed with token efficiency during execution.
+The model can propose a mode change; you confirm via a dialog. `plan_exit` is active
+only in PLAN; `plan_enter` in NORMAL/BUILD. This mirrors opencode's plan_enter/plan_exit
+and makes transitions deliberate.
 
-### Context Injection (PLAN Mode)
+### Context injection
 
-On every turn, the LLM receives instructions explaining:
-- It's in read-only PLAN mode
-- What restrictions apply
-- How to format the plan in `PLAN.md`
+- **PLAN:** the workflow prompt is re-injected every turn (robust to compaction).
+- **BUILD:** full plan on the first turn after switching and after compaction; only
+  remaining steps on subsequent turns. A one-time `BUILD_SWITCH` reminder is prepended
+  on the plan → build transition.
+- **NORMAL:** nothing is injected.
 
-### Tool Call Interception (PLAN Mode)
+Stale mode-reminder messages are filtered out by the `context` event when the mode
+changes.
 
-The `tool_call` event handler:
-- Blocks `write`/`edit` to anything except the plan file
-- Blocks bash commands that aren't in the safe allowlist
-- Returns a helpful message telling the user to switch to BUILD mode
+### Progress tracking (BUILD)
 
-### Session Start Behavior
+When the agent completes a step it includes `[DONE:n]` in its response. The extension
+marks the step done, updates `[ ]` → `[x]` in the plan file, refreshes the footer/widget,
+and celebrates when all steps complete.
 
-On fresh Pi launch or `/new`:
-- If `PLAN.md` has content → presents a selection dialog:
-  - **Continue existing plan** → enters PLAN mode to review
-  - **Start a new plan** → empties `PLAN.md`, enters PLAN mode
-  - **Ignore plan** → enters BUILD mode without plan tracking
-- If no `PLAN.md` → starts in BUILD mode (unless `--plan` flag)
+### State persistence
 
-### .gitignore Check
-
-On first `PLAN.md` creation, the extension checks if the plan file is in `.gitignore`. If not, it prompts the user whether to add it.
-
-### State Persistence
-
-Mode and plan state are persisted via `pi.appendEntry()` so they survive session restarts. On resume, completion state is rebuilt by scanning past assistant messages for `[DONE:n]` markers.
+Mode and plan state are persisted via `pi.appendEntry()` so they survive restarts.
 
 ### Compaction
 
-Custom compaction summary (via `session_before_compact`) includes plan state — mode, progress, and remaining steps — so context is preserved across compaction boundaries.
+A custom compaction summary includes mode, plan title, and remaining steps. After
+compaction the next BUILD turn re-injects the full plan.
 
-### Context Filtering
+## Bash allowlist (PLAN mode)
 
-Stale plan/build context messages are filtered out via the `context` event when the mode has changed, preventing confusion from old mode instructions.
+Commands are **split on `;`, `&&`, `||`, and `|`** and every segment must match a safe
+read-only pattern. A destructive token anywhere (including inside `$(...)` substitution)
+blocks the whole command.
 
-## Visual Indicators
+**Allowed:** `cat`, `head`, `tail`, `less`, `grep`, `find`, `ls`, `pwd`, `echo`, `wc`,
+`sort`, `diff`, `tree`, `git status/log/diff/show/branch`, `npm list/outdated`, `rg`,
+`fd`, `bat`, `eza`, `jq`, `awk`, `curl`, and more.
 
-- **Footer status:** `📋 PLAN (alt+q)` or `🔨 BUILD 3/7 (alt+q)`
-- **Widget (PLAN mode):** Full step checklist with ☑/☐ markers
-- **Widget (BUILD mode):** Remaining steps with progress header
+**Blocked:** `rm`, `mv`, `cp`, `mkdir`, `touch`, `chmod`, redirects (`>`, `>>`), `tee`,
+`npm install`, `git add/commit/push/...`, `sudo`, `kill`, editors, etc.
 
-## Bash Allowlist (PLAN Mode)
-
-**Allowed (safe patterns):** `cat`, `head`, `tail`, `less`, `grep`, `find`, `ls`, `pwd`, `echo`, `wc`, `sort`, `diff`, `tree`, `git status/log/diff/show/branch`, `npm list/outdated`, `rg`, `fd`, `bat`, `eza`, `jq`, `awk`, `curl`, and more read-only commands.
-
-**Blocked (destructive patterns):** `rm`, `mv`, `cp`, `mkdir`, `touch`, `chmod`, `npm install`, `git add/commit/push/pull/merge/rebase/reset`, `sudo`, `kill`, `vim`, `nano`, redirects (`>`, `>>`), and other destructive commands.
+> PLAN mode is a guardrail, not a sandbox — a determined prompt can still reach
+> destructive operations through exotic shell features.
 
 ## Architecture
 
 ```
 ee_pi_plan_build_extension/
-├── index.ts   # Extension entry point — events, commands, shortcuts, flags, UI
-├── utils.ts   # PLAN.md parsing, file ops, step tracking, safe command checking
-└── README.md  # This file
+├── index.ts      # entry: flags, commands, shortcut, event wiring (thin)
+├── modes.ts      # PlanBuildController — mode state machine + tool-set management
+├── tools.ts      # plan_enter / plan_exit transition tools
+├── prompts.ts    # PLAN-workflow / BUILD-switch prompt text
+├── utils.ts      # plan parsing, file ops, step tracking, safe-command, gitignore
+└── README.md
 ```
-
-### Key Extension APIs Used
-
-| API | Purpose |
-|-----|---------|
-| `pi.registerFlag()` | `--plan` and `--plan-file` CLI flags |
-| `pi.registerShortcut()` | `alt+q` toggle |
-| `pi.registerCommand()` | `/plan` command with subcommands |
-| `pi.on("tool_call")` | Block writes/destructive bash in PLAN mode |
-| `pi.on("before_agent_start")` | Inject plan context per turn |
-| `pi.on("context")` | Filter stale mode context messages |
-| `pi.on("turn_end")` | Detect `[DONE:n]` markers, update progress |
-| `pi.on("session_before_compact")` | Include plan state in compaction summary |
-| `pi.on("session_compact")` | Mark next turn for full context re-injection |
-| `pi.on("session_start")` | Initialize state, show session start dialog |
-| `pi.setActiveTools()` | Restrict tool set per mode |
-| `pi.appendEntry()` | Persist mode state across restarts |
-| `pi.sendMessage()` | Send completion celebration message |
-| `ctx.ui.setStatus()` | Footer mode indicator |
-| `ctx.ui.setWidget()` | Step checklist widget |
-| `ctx.ui.select()` | Session start dialog |
-| `ctx.ui.confirm()` | .gitignore prompt |
-| `ctx.ui.notify()` | Mode switch notifications |
-
 
 ## License
 
-MIT License, see ´LiCENSE`-file for details.
+MIT License, see `LICENSE`.
